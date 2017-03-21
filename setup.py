@@ -2,7 +2,8 @@ import sys
 sys.path.insert(0, 'src')
 from paho.mqtt import __version__
 
-from distutils.core import setup
+from setuptools import setup, find_packages
+
 setup(name='paho-mqtt',
 	version=__version__,
 	description='MQTT version 3.1.1 client class',
