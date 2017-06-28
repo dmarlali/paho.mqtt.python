@@ -39,6 +39,8 @@ import string
 import hashlib
 import logging
 
+from eventfd import EventFD
+
 try:
     # Use monotonic clock if available
     time_func = time.monotonic
@@ -494,7 +496,8 @@ class Client(object):
         self._protocol = protocol
         self._userdata = userdata
         self._sock = None
-        self._sockpairR, self._sockpairW = _socketpair_compat()
+        self._wake_event = EventFD()
+        # self._sockpairR, self._sockpairW = _socketpair_compat()
         self._keepalive = 60
         self._message_retry = 20
         self._last_retry_check = 0
@@ -579,12 +582,14 @@ class Client(object):
         if self._sock:
             self._sock.close()
             self._sock = None
-        if self._sockpairR:
-            self._sockpairR.close()
-            self._sockpairR = None
-        if self._sockpairW:
-            self._sockpairW.close()
-            self._sockpairW = None
+        if self._wake_event:
+            self._wake_event = None
+        # if self._sockpairR:
+        #     self._sockpairR.close()
+        #     self._sockpairR = None
+        # if self._sockpairW:
+        #     self._sockpairW.close()
+        #     self._sockpairW = None
 
         self.__init__(client_id, clean_session, userdata)
 
@@ -975,7 +980,7 @@ class Client(object):
 
         # sockpairR is used to break out of select() before the timeout, on a
         # call to publish() etc.
-        rlist = [self._sock, self._sockpairR]
+        rlist = [self._sock, self._wake_event]
         try:
             socklist = select.select(rlist, wlist, [], timeout)
         except TypeError:
@@ -996,16 +1001,18 @@ class Client(object):
             if rc or self._sock is None:
                 return rc
 
-        if self._sockpairR in socklist[0]:
-            # Stimulate output write even though we didn't ask for it, because
-            # at that point the publish or other command wasn't present.
-            socklist[1].insert(0, self._sock)
-            # Clear sockpairR - only ever a single byte written.
-            try:
-                self._sockpairR.recv(1)
-            except socket.error as err:
-                if err.errno != EAGAIN:
-                    raise
+        # if self._sockpairR in socklist[0]:
+        #     # Stimulate output write even though we didn't ask for it, because
+        #     # at that point the publish or other command wasn't present.
+        #     socklist[1].insert(0, self._sock)
+        #     # Clear sockpairR - only ever a single byte written.
+        #     try:
+        #         self._sockpairR.recv(1)
+        #     except socket.error as err:
+        #         if err.errno != EAGAIN:
+        #             raise
+        if self._wake_event and self._wake_event.is_set():
+            self._wake_event.clear()
 
         if self._sock in socklist[1]:
             rc = self.loop_write(max_packets)
@@ -2256,13 +2263,19 @@ class Client(object):
                     self._current_out_packet = self._out_packet.popleft()
                 self._current_out_packet_mutex.release()
 
-        # Write a single byte to sockpairW (connected to sockpairR) to break
-        # out of select() if in threaded mode.
         try:
-            self._sockpairW.send(sockpair_data)
+            self._wake_event.set()
         except socket.error as err:
             if err.errno != EAGAIN:
                 raise
+
+        # # Write a single byte to sockpairW (connected to sockpairR) to break
+        # # out of select() if in threaded mode.
+        # try:
+        #     self._sockpairW.send(sockpair_data)
+        # except socket.error as err:
+        #     if err.errno != EAGAIN:
+        #         raise
 
         if self._thread is None:
             if self._in_callback.acquire(False):
