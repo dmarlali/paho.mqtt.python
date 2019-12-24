@@ -18,10 +18,10 @@ to topics and retrieving messages. The two functions are simple(), which
 returns one or messages matching a set of topics, and callback() which allows
 you to pass a callback for processing of messages.
 """
+from __future__ import absolute_import
 
-import paho.mqtt.client as paho
-import paho.mqtt as mqtt
-
+from . import client as paho
+from .. import mqtt
 
 def _on_connect(client, userdata, flags, rc):
     """Internal callback"""
@@ -64,7 +64,8 @@ def _on_message_simple(client, userdata, message):
 
 def callback(callback, topics, qos=0, userdata=None, hostname="localhost",
              port=1883, client_id="", keepalive=60, will=None, auth=None,
-             tls=None, protocol=paho.MQTTv311, transport="tcp"):
+             tls=None, protocol=paho.MQTTv311, transport="tcp",
+             clean_session=True, proxy_args=None):
     """Subscribe to a list of topics and process them in a callback function.
 
     This function creates an MQTT client, connects to a broker and subscribes
@@ -107,7 +108,7 @@ def callback(callback, topics, qos=0, userdata=None, hostname="localhost",
     tls : a dict containing TLS configuration parameters for the client:
           dict = {'ca_certs':"<ca_certs>", 'certfile':"<certfile>",
           'keyfile':"<keyfile>", 'tls_version':"<tls_version>",
-          'ciphers':"<ciphers">}
+          'ciphers':"<ciphers">, 'insecure':"<bool>"}
           ca_certs is required, all other parameters are optional and will
           default to None if not provided, which results in the client using
           the default behaviour - see the paho.mqtt.client documentation.
@@ -117,6 +118,15 @@ def callback(callback, topics, qos=0, userdata=None, hostname="localhost",
 
     transport : set to "tcp" to use the default setting of transport which is
           raw TCP. Set to "websockets" to use WebSockets as the transport.
+
+    clean_session : a boolean that determines the client type. If True,
+                    the broker will remove all information about this client
+                    when it disconnects. If False, the client is a persistent
+                    client and subscription information and queued messages
+                    will be retained when the client disconnects.
+                    Defaults to True.
+
+    proxy_args: a dictionary that will be given to the client.
     """
 
     if qos < 0 or qos > 2:
@@ -129,9 +139,13 @@ def callback(callback, topics, qos=0, userdata=None, hostname="localhost",
         'userdata':userdata}
 
     client = paho.Client(client_id=client_id, userdata=callback_userdata,
-                         protocol=protocol, transport=transport)
+                         protocol=protocol, transport=transport,
+                         clean_session=clean_session)
     client.on_message = _on_message_callback
     client.on_connect = _on_connect
+
+    if proxy_args is not None:
+        client.proxy_set(**proxy_args)
 
     if auth:
         username = auth.get('username')
@@ -147,7 +161,12 @@ def callback(callback, topics, qos=0, userdata=None, hostname="localhost",
 
     if tls is not None:
         if isinstance(tls, dict):
+            insecure = tls.pop('insecure', False)
             client.tls_set(**tls)
+            if insecure:
+                # Must be set *after* the `client.tls_set()` call since it sets
+                # up the SSL context that `client.tls_insecure_set` alters.
+                client.tls_insecure_set(insecure)
         else:
             # Assume input is SSLContext object
             client.tls_set_context(tls)
@@ -158,7 +177,8 @@ def callback(callback, topics, qos=0, userdata=None, hostname="localhost",
 
 def simple(topics, qos=0, msg_count=1, retained=True, hostname="localhost",
            port=1883, client_id="", keepalive=60, will=None, auth=None,
-           tls=None, protocol=paho.MQTTv311, transport="tcp"):
+           tls=None, protocol=paho.MQTTv311, transport="tcp",
+           clean_session=True, proxy_args=None):
     """Subscribe to a list of topics and return msg_count messages.
 
     This function creates an MQTT client, connects to a broker and subscribes
@@ -206,7 +226,7 @@ def simple(topics, qos=0, msg_count=1, retained=True, hostname="localhost",
     tls : a dict containing TLS configuration parameters for the client:
           dict = {'ca_certs':"<ca_certs>", 'certfile':"<certfile>",
           'keyfile':"<keyfile>", 'tls_version':"<tls_version>",
-          'ciphers':"<ciphers">}
+          'ciphers':"<ciphers">, 'insecure':"<bool>"}
           ca_certs is required, all other parameters are optional and will
           default to None if not provided, which results in the client using
           the default behaviour - see the paho.mqtt.client documentation.
@@ -216,6 +236,15 @@ def simple(topics, qos=0, msg_count=1, retained=True, hostname="localhost",
 
     transport : set to "tcp" to use the default setting of transport which is
           raw TCP. Set to "websockets" to use WebSockets as the transport.
+
+    clean_session : a boolean that determines the client type. If True,
+                    the broker will remove all information about this client
+                    when it disconnects. If False, the client is a persistent
+                    client and subscription information and queued messages
+                    will be retained when the client disconnects.
+                    Defaults to True.
+
+    proxy_args: a dictionary that will be given to the client.
     """
 
     if msg_count < 1:
@@ -231,6 +260,7 @@ def simple(topics, qos=0, msg_count=1, retained=True, hostname="localhost",
     userdata = {'retained':retained, 'msg_count':msg_count, 'messages':messages}
 
     callback(_on_message_simple, topics, qos, userdata, hostname, port,
-             client_id, keepalive, will, auth, tls, protocol, transport)
+             client_id, keepalive, will, auth, tls, protocol, transport,
+             clean_session, proxy_args)
 
     return userdata['messages']
